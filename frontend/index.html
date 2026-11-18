@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phoenix 4D LiDAR Solar & Shadow Digital Twin</title>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/deck.gl@9.0.34/dist.min.js"></script>
+  <style>
+    :root {
+      --bg-panel: rgba(10, 15, 28, 0.88);
+      --border-panel: rgba(56, 189, 248, 0.25);
+      --accent-gold: #fbbf24;
+      --accent-cyan: #38bdf8;
+      --accent-emerald: #10b981;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #060913; color: var(--text-main); }
+    #map { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+    .glass-panel {
+      background: var(--bg-panel);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border-panel);
+      border-radius: 12px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+    }
+
+    #hud-top-left {
+      position: absolute;
+      top: 18px;
+      left: 18px;
+      width: 395px;
+      padding: 16px 18px;
+      z-index: 10;
+    }
+
+    .badge-live {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent-cyan);
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      padding: 3px 9px;
+      border-radius: 999px;
+      margin-bottom: 8px;
+    }
+
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 8px #22c55e;
+    }
+
+    h1 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      line-height: 1.25;
+      margin-bottom: 3px;
+    }
+
+    .subtitle {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .kpi-card {
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 8px;
+      padding: 8px 11px;
+    }
+
+    .kpi-label {
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 2px;
+    }
+
+    .kpi-val {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--accent-gold);
+    }
+
+    .kpi-val.cyan { color: var(--accent-cyan); }
+    .kpi-val.emerald { color: var(--accent-emerald); }
+
+    /* Dynamic Legend Section */
+    .legend-box {
+      border-top: 1px solid rgba(148, 163, 184, 0.16);
+      padding-top: 11px;
+    }
+
+    .legend-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 7px;
+    }
+
+    .legend-scale {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+      margin-bottom: 9px;
+    }
+
+    .legend-step {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .legend-bar {
+      height: 6px;
+      border-radius: 3px;
+    }
+
+    .legend-step span {
+      font-size: 9.5px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .legend-layers {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10.5px;
+      color: var(--text-muted);
+      padding-top: 4px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .swatch-shadow {
+      width: 11px;
+      height: 11px;
+      border-radius: 2px;
+      background: #020617;
+      border: 1px solid rgba(148, 163, 184, 0.45);
+    }
+
+    .swatch-hub {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #22d3ee;
+      border: 1.5px solid #ffffff;
+      box-shadow: 0 0 6px #22d3ee;
+    }
+
+    .swatch-arc {
+      width: 14px;
+      height: 2px;
+      background: linear-gradient(90deg, #facc15, #22d3ee);
+    }
+
+    /* Hover Tooltip */
+    #hover-tooltip {
+      position: absolute;
+      pointer-events: none;
+      z-index: 20;
+      background: rgba(10, 15, 28, 0.94);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      border-radius: 8px;
+      padding: 8px 11px;
+      font-size: 11.5px;
+      color: var(--text-main);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6);
+      display: none;
+      line-height: 1.45;
+    }
+
+    #inspector-panel {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      width: 340px;
+      padding: 18px;
+      z-index: 10;
+      display: none;
+    }
+
+    .inspector-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+    }
+
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12.5px;
+      padding: 5px 0;
+      border-bottom: 1px dashed rgba(148, 163, 184, 0.12);
+    }
+
+    .metric-row span:first-child { color: var(--text-muted); }
+    .metric-row span:last-child { font-weight: 600; color: var(--text-main); }
+
+    #hud-bottom {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(900px, calc(100% - 36px));
+      padding: 13px 18px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    #play-btn {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #090d16;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 13px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      min-width: 92px;
+    }
+
+    #hour-display {
+      font-size: 16px;
+      font-weight: 800;
+      color: var(--accent-gold);
+      min-width: 62px;
+    }
+
+    input[type="range"] {
+      flex: 1;
+      accent-color: #fbbf24;
+      cursor: pointer;
+    }
+
+    .controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      border-top: 1px solid rgba(148, 163, 184, 0.15);
+      padding-top: 8px;
+    }
+
+    .toggle-group {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    label.chk {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      color: var(--text-main);
+    }
+
+    select {
+      background: #0f172a;
+      color: var(--text-main);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+
+    .solar-telemetry {
+      color: var(--accent-cyan);
+      font-weight: 600;
+      font-size: 11.5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="hover-tooltip"></div>
+
+  <div id="hud-top-left" class="glass-panel">
+    <div class="badge-live"><span class="pulse-dot"></span> Live PostGIS Spatial Engine</div>
+    <h1>Phoenix 4D LiDAR Solar & Shadow Digital Twin</h1>
+    <div class="subtitle">Downtown Core · USGS 3DEP 1m DEM · pvlib Ray-Tracing</div>
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">District Capacity</div>
+        <div class="kpi-val" id="kpi-mwp">-- MWp</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Annual Solar Yield</div>
+        <div class="kpi-val cyan" id="kpi-gwh">-- GWh/yr</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Commercial Savings</div>
+        <div class="kpi-val emerald" id="kpi-savings">$-- M/yr</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">CO₂ Offset</div>
+        <div class="kpi-val" id="kpi-co2">-- t/yr</div>
+      </div>
+    </div>
+
+    <!-- Dynamic Cartographic Legend -->
+    <div class="legend-box">
+      <div class="legend-title" id="legend-title">Rooftop Solar Irradiance (W/m²)</div>
+      <div class="legend-scale" id="legend-scale"></div>
+      <div class="legend-layers">
+        <span class="legend-item"><span class="swatch-shadow"></span>Cast Shadows</span>
+        <span class="legend-item"><span class="swatch-hub"></span>EV / Grid Hub</span>
+        <span class="legend-item"><span class="swatch-arc"></span>PV Dispatch</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="inspector-panel" class="glass-panel">
+    <div class="inspector-header">
+      <div>
+        <div style="font-size: 11px; color: var(--accent-cyan); font-weight: 700;">ASSET SOLAR & ESG AUDIT</div>
+        <div style="font-size: 15px; font-weight: 700;" id="insp-title">Building #--</div>
+      </div>
+      <button class="close-btn" onclick="document.getElementById('inspector-panel').style.display='none'">&times;</button>
+    </div>
+    <div id="insp-body"></div>
+  </div>
+
+  <div id="hud-bottom" class="glass-panel">
+    <div class="slider-row">
+      <button id="play-btn" onclick="togglePlay()">▶ Play 4D</button>
+      <div id="hour-display">12:00</div>
+      <input type="range" id="hour-slider" min="6" max="19" step="1" value="12" />
+      <div class="solar-telemetry" id="sun-telemetry">Sun El: 78.0° · Az: 144.6°</div>
+    </div>
+    <div class="controls-row">
+      <div class="toggle-group">
+        <label class="chk"><input type="checkbox" id="chk-shadows" checked /> 3D Cast Shadows</label>
+        <label class="chk"><input type="checkbox" id="chk-arcs" checked /> Microgrid EV Arcs</label>
+        <span>Color Mode:
+          <select id="color-mode">
+            <option value="irradiance">Live Hourly Irradiance (W/m²)</option>
+            <option value="payback">Financial ROI (Payback Years)</option>
+          </select>
+        </span>
+      </div>
+      <div class="toggle-group">
+        <span>Max Payback: <strong id="payback-label">15 yrs</strong></span>
+        <input type="range" id="payback-slider" min="4" max="20" step="1" value="15" style="width: 100px;" />
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const PHOENIX_VIEW = {
+      longitude: -112.0740,
+      latitude: 33.4484,
+      zoom: 14.8,
+      pitch: 56,
+      bearing: -24
+    };
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+      center: [PHOENIX_VIEW.longitude, PHOENIX_VIEW.latitude],
+      zoom: PHOENIX_VIEW.zoom,
+      pitch: PHOENIX_VIEW.pitch,
+      bearing: PHOENIX_VIEW.bearing,
+      antialias: true
+    });
+
+    const deckOverlay = new deck.MapboxOverlay({
+      interleaved: false,
+      layers: []
+    });
+    map.addControl(deckOverlay);
+
+    let currentBuildings = null;
+    let currentShadows = null;
+    let currentArcs = [];
+    let demandHubs = [];
+    let playTimer = null;
+
+    function updateLegend() {
+      const mode = document.getElementById('color-mode').value;
+      const titleEl = document.getElementById('legend-title');
+      const scaleEl = document.getElementById('legend-scale');
+
+      if (mode === 'payback') {
+        titleEl.textContent = 'Financial ROI · Simple Payback Period';
+        scaleEl.innerHTML = `
+          <div class="legend-step"><div class="legend-bar" style="background:#10b981"></div><span>≤ 5.6 yrs</span></div>
+          <div class="legend-step"><div class="legend-bar" style="background:#38bdf8"></div><span>5.7–6.8y</span></div>
+          <div class="legend-step"><div class="legend-bar" style="background:#f59e0b"></div><span>6.9–8.5y</span></div>
+          <div class="legend-step"><div class="legend-bar" style="background:#ef4444"></div><span>&gt; 8.5 yrs</span></div>
+        `;
+      } else {
+        titleEl.textContent = 'Live Rooftop Solar Irradiance (W/m²)';
+        scaleEl.innerHTML = `
+          <div class="legend-step"><div class="legend-bar" style="background:#1a2e56"></div><span>&lt; 250</span></div>
+          <div class="legend-step"><div class="legend-bar" style="background:#d97706"></div><span>250–550</span></div>
+          <div class="legend-step"><div class="legend-bar" style="background:#facc15"></div><span>550–800</span></div>
+          <div class="legend-step"><div class="legend-bar" style="background:#fef9c3"></div><span>&gt; 800</span></div>
+        `;
+      }
+    }
+
+    function getBuildingColor(feature, mode) {
+      const p = feature.properties;
+      if (mode === 'payback') {
+        const pb = Number(p.payback_years || 10);
+        if (pb <= 5.6) return [16, 185, 129, 235];
+        if (pb <= 6.8) return [56, 189, 248, 235];
+        if (pb <= 8.5) return [245, 158, 11, 235];
+        return [239, 68, 68, 225];
+      }
+
+      const irr = Number(p.irradiance_wm2 || 0);
+      const t = Math.min(1, Math.max(0, irr / 980));
+      if (t < 0.25) return [26, 46, 86, 235];
+      if (t < 0.55) return [217, 119, 6, 235];
+      if (t < 0.80) return [250, 204, 21, 242];
+      return [254, 249, 195, 250];
+    }
+
+    function showHoverTooltip(info, htmlContent) {
+      const tt = document.getElementById('hover-tooltip');
+      if (!info.object) {
+        tt.style.display = 'none';
+        return;
+      }
+      tt.innerHTML = htmlContent;
+      tt.style.left = `${info.x + 14}px`;
+      tt.style.top = `${info.y + 14}px`;
+      tt.style.display = 'block';
+    }
+
+    function renderLayers() {
+      const showShadows = document.getElementById('chk-shadows').checked;
+      const showArcs = document.getElementById('chk-arcs').checked;
+      const colorMode = document.getElementById('color-mode').value;
+      const layers = [];
+
+      if (showShadows && currentShadows) {
+        layers.push(new deck.GeoJsonLayer({
+          id: 'cast-shadows-layer',
+          data: currentShadows,
+          filled: true,
+          stroked: false,
+          getFillColor: [2, 6, 23, 175]
+        }));
+      }
+
+      if (currentBuildings) {
+        layers.push(new deck.GeoJsonLayer({
+          id: 'phoenix-buildings-3d',
+          data: currentBuildings,
+          extruded: true,
+          wireframe: true,
+          pickable: true,
+          autoHighlight: true,
+          highlightColor: [56, 189, 248, 180],
+          getElevation: f => Number(f.properties.lidar_height_m || 10),
+          getFillColor: f => getBuildingColor(f, colorMode),
+          getLineColor: [15, 23, 42, 110],
+          lineWidthMinPixels: 1,
+          updateTriggers: {
+            getFillColor: [colorMode, currentBuildings]
+          },
+          onHover: info => {
+            if (!info.object) return showHoverTooltip(info, '');
+            const p = info.object.properties;
+            showHoverTooltip(info, `
+              <strong style="color:#fbbf24">Asset #${p.building_id}</strong> · ${Number(p.lidar_height_m).toFixed(0)}m<br/>
+              Irradiance: <strong>${p.irradiance_wm2} W/m²</strong> (${p.generation_kw} kW)<br/>
+              ROI Payback: <strong style="color:#38bdf8">${p.payback_years} yrs</strong> · Click for full audit
+            `);
+          },
+          onClick: info => {
+            if (info.object) openInspector(info.object.properties);
+          }
+        }));
+      }
+
+      if (showArcs && currentArcs.length > 0) {
+        layers.push(new deck.ArcLayer({
+          id: 'microgrid-energy-arcs',
+          data: currentArcs,
+          pickable: false,
+          getSourcePosition: d => d.source,
+          getTargetPosition: d => d.target,
+          getSourceColor: [250, 204, 21, 165],
+          getTargetColor: [34, 211, 238, 215],
+          getWidth: 2,
+          getHeight: 0.22
+        }));
+      }
+
+      if (demandHubs.length > 0) {
+        layers.push(new deck.ScatterplotLayer({
+          id: 'ev-demand-hubs',
+          data: demandHubs,
+          pickable: true,
+          getPosition: d => d.coordinates,
+          getFillColor: [34, 211, 238, 230],
+          getLineColor: [255, 255, 255, 255],
+          lineWidthMinPixels: 2,
+          getRadius: 22,
+          radiusMinPixels: 5,
+          radiusMaxPixels: 8,
+          onHover: info => {
+            if (!info.object) return showHoverTooltip(info, '');
+            const d = info.object;
+            showHoverTooltip(info, `
+              <strong style="color:#22d3ee">${d.hub_name}</strong><br/>
+              Type: ${d.hub_type} · Peak Load: ${d.peak_demand_kw} kW
+            `);
+          }
+        }));
+      }
+
+      deckOverlay.setProps({ layers });
+    }
+
+    function openInspector(p) {
+      const panel = document.getElementById('inspector-panel');
+      document.getElementById('insp-title').textContent = `Asset #${p.building_id} (${p.building_type})`;
+      document.getElementById('insp-body').innerHTML = `
+        <div class="metric-row"><span>LiDAR Structure Height</span><span>${Number(p.lidar_height_m).toFixed(1)} m</span></div>
+        <div class="metric-row"><span>Roof Slope / Azimuth</span><span>${p.roof_slope_deg}° / ${p.roof_aspect_deg}°</span></div>
+        <div class="metric-row"><span>Usable PV Roof Area</span><span>${Number(p.usable_solar_area_sqm).toLocaleString()} m²</span></div>
+        <div class="metric-row"><span>Urban Shading Loss</span><span>${p.shading_loss_pct}%</span></div>
+        <div class="metric-row"><span>Live Sunlit Fraction</span><span>${(Number(p.sunlit_fraction) * 100).toFixed(1)}%</span></div>
+        <div class="metric-row"><span>Live Irradiance / Output</span><span style="color:#fbbf24">${p.irradiance_wm2} W/m² (${p.generation_kw} kW)</span></div>
+        <div class="metric-row"><span>System Capacity</span><span>${Number(p.system_capacity_kwp).toLocaleString()} kWp</span></div>
+        <div class="metric-row"><span>Net CAPEX (after 30% ITC)</span><span>$${Number(p.estimated_capex_usd).toLocaleString()}</span></div>
+        <div class="metric-row"><span>Annual Energy Savings</span><span style="color:#10b981">$${Number(p.annual_savings_usd).toLocaleString()}/yr</span></div>
+        <div class="metric-row"><span>Simple Payback ROI</span><span style="color:#38bdf8">${p.payback_years} years</span></div>
+        <div class="metric-row"><span>Annual CO₂ Avoided</span><span>${p.co2_offset_tons_yr} tons/yr</span></div>
+      `;
+      panel.style.display = 'block';
+    }
+
+    async function loadSummaryAndHubs() {
+      const [sumRes, hubsRes] = await Promise.all([
+        fetch('/api/summary').then(r => r.json()),
+        fetch('/api/demand-hubs').then(r => r.json())
+      ]);
+      document.getElementById('kpi-mwp').textContent = `${sumRes.total_capacity_mwp} MWp`;
+      document.getElementById('kpi-gwh').textContent = `${sumRes.total_generation_gwh} GWh/yr`;
+      document.getElementById('kpi-savings').textContent = `$${sumRes.total_savings_musd}M/yr`;
+      document.getElementById('kpi-co2').textContent = `${Number(sumRes.total_co2_tons).toLocaleString()} t/yr`;
+      demandHubs = hubsRes;
+    }
+
+    async function loadHourState(hour) {
+      const maxPayback = document.getElementById('payback-slider').value;
+      document.getElementById('hour-display').textContent = `${String(hour).padStart(2, '0')}:00`;
+
+      const [bldgData, shadowData, arcsData] = await Promise.all([
+        fetch(`/api/buildings/solar?hour=${hour}&max_payback=${maxPayback}`).then(r => r.json()),
+        fetch(`/api/shadows/${hour}`).then(r => r.json()),
+        fetch(`/api/energy-arcs?hour=${hour}`).then(r => r.json())
+      ]);
+
+      currentBuildings = bldgData;
+      currentShadows = shadowData.geojson;
+
+      // Deduplicate arcs so each EV/Grid hub receives clean 1-to-1 optimal dispatch beams
+      const hubCounts = {};
+      currentArcs = arcsData.filter(arc => {
+        hubCounts[arc.hub_name] = (hubCounts[arc.hub_name] || 0) + 1;
+        return hubCounts[arc.hub_name] <= 2;
+      }).slice(0, 16);
+
+      document.getElementById('sun-telemetry').textContent =
+        `Sun El: ${shadowData.solar_elevation_deg}° · Az: ${shadowData.solar_azimuth_deg}°`;
+
+      renderLayers();
+    }
+
+    function togglePlay() {
+      const btn = document.getElementById('play-btn');
+      const slider = document.getElementById('hour-slider');
+      if (playTimer) {
+        clearInterval(playTimer);
+        playTimer = null;
+        btn.textContent = '▶ Play 4D';
+        return;
+      }
+      btn.textContent = '⏸ Pause';
+      playTimer = setInterval(() => {
+        let nextHour = Number(slider.value) + 1;
+        if (nextHour > 19) nextHour = 6;
+        slider.value = nextHour;
+        loadHourState(nextHour);
+      }, 1100);
+    }
+
+    document.getElementById('hour-slider').addEventListener('input', e => loadHourState(Number(e.target.value)));
+    document.getElementById('payback-slider').addEventListener('input', e => {
+      document.getElementById('payback-label').textContent = `${e.target.value} yrs`;
+      loadHourState(Number(document.getElementById('hour-slider').value));
+    });
+    document.getElementById('chk-shadows').addEventListener('change', renderLayers);
+    document.getElementById('chk-arcs').addEventListener('change', renderLayers);
+    document.getElementById('color-mode').addEventListener('change', () => {
+      updateLegend();
+      renderLayers();
+    });
+
+    map.on('load', async () => {
+      updateLegend();
+      await loadSummaryAndHubs();
+      await loadHourState(12);
+    });
+  </script>
+</body>
+</html>
